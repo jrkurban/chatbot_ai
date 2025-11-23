@@ -31,7 +31,7 @@ user_data = {
     },
     "contact": {
         "linkedin": "https://linkedin.com/in/batuhanalpkurban",
-        "github": "https://github.com/batuhanalpkurban",
+        "github": "https://github.com/jrkurban",
         "email": "batuhanalpkurban@gmail.com",
         "phone": "+49 152 07769971"
     },
