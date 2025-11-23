@@ -37,7 +37,7 @@ Kişilik: Profesyonel, çözüm odaklı ama samimi. Kısa ve net cevaplar vermey
 # --- MODEL AYARLARI ---
 # System Instruction: Modele kim olduğunu öğretiyoruz.
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
+    model_name="gemini-2.5-flash",
     system_instruction=f"Sen Batuhan'ın yapay zeka asistanısın. Amacın işe alım uzmanlarına Batuhan'ı tanıtmak. Aşağıdaki bilgilere dayanarak cevap ver. Bilmediğin bir şey sorulursa dürüstçe 'Bu konuda bilgim yok ama Batuhan'a sorabilirim' de. Asla kendi başına bilgi uydurma. \n\nVeri: {MY_DATA}"
 )
 
