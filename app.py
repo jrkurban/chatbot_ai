@@ -1,237 +1,186 @@
 import streamlit as st
 import google.generativeai as genai
-import json
+import firebase_admin
+from firebase_admin import credentials, firestore
+import uuid
 import time
-import requests  # Telegram bildirimi için şart
+from datetime import datetime
 
-# --- 1. PAGE CONFIGURATION ---
-st.set_page_config(
-    page_title="Batuhan Alp Kurban | AI Portfolio",
-    page_icon="👨‍💻",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- 1. AYARLAR VE BAĞLANTILAR ---
+st.set_page_config(page_title="Batuhan | AI & Live Chat", layout="wide", page_icon="⚡")
 
-# --- 2. API SETUP ---
-try:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=api_key)
-except Exception as e:
-    st.error("API Key not found! Please check your .streamlit/secrets.toml file.")
-    st.stop()
+# Firebase Bağlantısı (Singleton Pattern - Sadece 1 kere bağlanır)
+if not firebase_admin._apps:
+    cred = credentials.Certificate(dict(st.secrets["firebase"]))
+    firebase_admin.initialize_app(cred)
 
-# --- TELEGRAM FUNCTION ---
-def send_telegram_notification(sender_name):
-    """Sends a push notification to your phone via Telegram."""
-    try:
-        # Secrets dosyasından bilgileri çekiyoruz
-        bot_token = st.secrets["TELEGRAM_TOKEN"]
-        chat_id = st.secrets["TELEGRAM_CHAT_ID"]
-        
-        message = f"🚨 İŞ FIRSATI! \n\nKimden: {sender_name}\n\nBir Recruiter seninle görüşmek istiyor."
-        
-        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id,
-            "text": message
-        }
-        
-        response = requests.post(url, json=payload)
-        
-        # --- DEBUG BÖLÜMÜ ---
-        if response.status_code == 200:
-            return True
+db = firestore.client()
+
+# Gemini Ayarı
+genai.configure(api_key=st.secrets["general"]["GOOGLE_API_KEY"])
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# --- 2. FONKSİYONLAR ---
+
+def get_session_id():
+    """Her ziyaretçiye benzersiz bir ID verir."""
+    if "session_id" not in st.session_state:
+        # URL'den session alma (Admin belirli bir session'a girmek isterse)
+        query_params = st.query_params
+        if "id" in query_params:
+            st.session_state.session_id = query_params["id"]
         else:
-            # İşte hatayı burada göreceğiz:
-            st.error(f"Telegram Hatası Detayı: {response.text}") 
-            return False
-            
-    except Exception as e:
-        st.error(f"Kod Hatası: {str(e)}")
-        return False
+            st.session_state.session_id = str(uuid.uuid4())
+    return st.session_state.session_id
 
-# --- 3. YOUR DATA (ENGLISH) ---
-user_data = {
-    "identity": {
-        "name": "Batuhan Alp Kurban",
-        "title": "Software Engineer (5+ Years Experience)",
-        "location": "Germany",
-        "summary": "Proactive Python Developer with 5+ years of experience designing and maintaining distributed data systems, automated pipelines, and real-time integrations.",
-        "contact_note": "You can reach out via LinkedIn or email at batuhanalpkurban@gmail.com."
-    },
-    "contact": {
-        "linkedin": "https://linkedin.com/in/batuhanalpkurban",
-        "github": "https://github.com/jrkurban",
-        "email": "batuhanalpkurban@gmail.com",
-        "phone": "+49 152 07769971"
-    },
-    "education": [
-        {
-            "school": "Istanbul Aydin University",
-            "degree": "Bachelor of Science in Software Engineering",
-            "details": "Developed pedestrian detection program (MATLAB), market stock system (.NET), and sales management system (Oracle DB)."
-        },
-        {
-            "school": "Miuul",
-            "degree": "Data Engineer Bootcamp",
-            "details": "Gained practical expertise in modern data stack, scalable data pipelines, Delta Lake, Apache Spark, and Hadoop."
-        }
-    ],
-    "skills": {
-        "Languages_Frameworks": "Python (3.9+), FastAPI, Flask, aiohttp, Bash Scripting",
-        "Data_AI": "PostgreSQL, MongoDB, Redis, Cassandra, Spark, Hadoop, Kafka, Airflow, LLM (RAG), Pandas",
-        "DevOps_Cloud": "AWS (ECS, Lambda), GCP, Docker, Kubernetes, CI/CD (GitHub Actions), Grafana, Prometheus",
-        "Other": "Git, REST & gRPC Services, Asynchronous Programming, Microservices Architecture"
-    },
-    "experience": [
-        {
-            "company": "xDatum",
-            "role": "Software Engineer",
-            "date": "Nov 2023 - Present",
-            "highlights": "Developed asynchronous Python microservices (FastAPI) for AI analytics. Built REST/gRPC services for real-time pipelines. Migrated legacy services to microservices (30% reduced complexity)."
-        },
-        {
-            "company": "Hometech",
-            "role": "Software Engineer",
-            "date": "Jan 2023 - Nov 2023",
-            "highlights": "Built scalable APIs with FastAPI/Flask. Containerized services (Docker/K8s). Implemented Redis/RabbitMQ. Designed LLM-powered internal chatbot using RAG architecture."
-        },
-        {
-            "company": "GreenTech Data Consultancy",
-            "role": "Software Engineer",
-            "date": "Nov 2021 - Jan 2023",
-            "highlights": "Engineered fault-tolerant microservices for streaming/ML. Developed CDC-based pipelines with Kafka. Automated ETL/ELT pipelines using Apache Airflow."
-        }
-    ],
-    "certificates": [
-        "Introduction to Big Data (BTK Akademi)",
-        "Data Engineering Foundations (LinkedIn)",
-        "Artificial Intelligence Foundations (LinkedIn)",
-        "CoderSpace Cloud & DevOps"
-    ]
-}
+def load_chat_history(session_id):
+    """Firestore'dan mesajları çeker."""
+    messages_ref = db.collection("chats").document(session_id).collection("messages").order_by("timestamp")
+    docs = messages_ref.stream()
+    return [{"role": doc.to_dict()["role"], "content": doc.to_dict()["content"]} for doc in docs]
 
-# System Prompt
-system_prompt = f"""
-You are the AI Assistant for Batuhan Alp Kurban. Your goal is to professionally introduce Batuhan to recruiters and hiring managers.
-Use the provided JSON data (Experience, Skills, Education) to answer questions accurately.
+def save_message(session_id, role, content):
+    """Mesajı veritabanına kaydeder."""
+    db.collection("chats").document(session_id).collection("messages").add({
+        "role": role,
+        "content": content,
+        "timestamp": datetime.now()
+    })
+    # Son güncellenme zamanını ana dokümana işle (Admin listesinde sıralamak için)
+    db.collection("chats").document(session_id).set({
+        "last_updated": datetime.now(),
+        "preview": content[:50]
+    }, merge=True)
 
-RULES:
-1. Highlight his experience in Python, Microservices, and AI/LLM technologies.
-2. If asked about specific tech stacks, list them from the 'skills' section.
-3. Keep the tone professional, confident, yet conversational ("Vibe Coder" persona).
-4. If a piece of information is missing in the JSON, say: "That specific detail isn't in my database, but Batuhan can clarify that in an interview."
-5. Always speak in English.
-
-DATA SOURCE:
-{json.dumps(user_data)}
+# --- 3. SİSTEM PROMPT (BATUHAN KİMLİĞİ) ---
+SYSTEM_PROMPT = """
+Sen Batuhan Alp Kurban'ın AI asistanısın.
+5+ yıllık Yazılım Mühendisisin. Python, Backend ve AI uzmanısın.
+Kısa, net ve profesyonel cevap ver.
+Eğer teknik detay sorulursa (FastAPI, AWS vs) bilgini konuştur.
 """
 
-# --- MODEL SETUP ---
-# Kullanıcının isteği üzerine 2.5 sürümü ayarlandı.
-# Eğer API hata verirse "gemini-1.5-flash" veya "gemini-2.0-flash-exp" deneyin.
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash", 
-    system_instruction=system_prompt
-)
+# --- 4. ARAYÜZ MANTIĞI ---
 
-# --- 4. SIDEBAR & CONTACT FORM ---
+# Sidebar'da Admin Girişi
 with st.sidebar:
-    st.image("https://media.licdn.com/dms/image/v2/D4D03AQFbte2In3Pf1Q/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1716031477195?e=1765411200&v=beta&t=i_e4sZbzt8qTWxj832To4Vta2KJ58kP6M0EXY4l1CR0", caption="Batuhan Alp Kurban")
-    st.title("Batuhan Alp Kurban")
-    st.caption("Software Engineer | Python & AI")
+    st.title("⚡ Vibe Coder Mode")
+    mode = st.radio("Mod Seç", ["Recruiter (Ziyaretçi)", "Admin (Batuhan)"])
     
-    st.markdown("---")
+    if mode == "Admin (Batuhan)":
+        password = st.text_input("Admin Şifresi", type="password")
+        if password == st.secrets["general"]["ADMIN_PASSWORD"]:
+            st.success("Giriş Başarılı! Panele Geçiliyor...")
+            is_admin = True
+        else:
+            st.warning("Şifre Yanlış")
+            is_admin = False
+    else:
+        is_admin = False
 
-    # --- QUICK CONTACT FORM (TELEGRAM) ---
-    with st.expander("📞 Contact Me Directly", expanded=True):
-        st.write("Want to schedule an interview?")
-        with st.form(key='contact_form'):
-            sender_name = st.text_input("Your Name / Company:")
-            submit_btn = st.form_submit_button(label="🚀 Notify Batuhan")
-            
-            if submit_btn:
-                if sender_name:
-                    if send_telegram_notification(sender_name):
-                        st.success("Notification sent! Batuhan will get back to you shortly.")
-                        st.balloons()
-                    else:
-                        st.error("Notification failed. Please verify Telegram settings.")
-                else:
-                    st.warning("Please enter your name.")
-
-    st.markdown("---")
-    st.link_button("LinkedIn Profile", user_data['contact']['linkedin'])
-    st.link_button("GitHub Profile", user_data['contact']['github'])
-    st.link_button("📧 Send Email", f"mailto:{user_data['contact']['email']}")
+# === SENARYO A: ADMİN PANELİ (SENİN EKRANIN) ===
+if is_admin:
+    st.header("🕵️‍♂️ Admin Kontrol Merkezi")
     
+    # 1. Aktif Sohbetleri Listele
+    st.subheader("Aktif Görüşmeler")
+    chats_ref = db.collection("chats").order_by("last_updated", direction=firestore.Query.DESCENDING).limit(10)
+    docs = chats_ref.stream()
+    
+    cols = st.columns([1, 3, 2])
+    cols[0].write("**ID (Son 4 hane)**")
+    cols[1].write("**Son Mesaj**")
+    cols[2].write("**İşlem**")
+    
+    selected_session = None
+    
+    for doc in docs:
+        data = doc.to_dict()
+        sid = doc.id
+        with st.container():
+            c1, c2, c3 = st.columns([1, 3, 2])
+            c1.write(f"`..{sid[-4:]}`")
+            c2.write(f"_{data.get('preview', '')}_")
+            if c3.button(f"Odaya Gir ➡️", key=sid):
+                st.query_params["id"] = sid
+                st.rerun()
+
     st.markdown("---")
-    st.write("📍 " + user_data['identity']['location'])
-    st.caption("Powered by Gemini 2.5 Flash")
-
-# --- 5. MAIN INTERFACE ---
-st.header("Hello! I'm Batuhan's AI Assistant 👋")
-st.markdown(f"""
-> *"{user_data['identity']['summary']}"*
-""")
-
-# Initialize Chat History
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-    welcome_msg = "Hi there! I'm here to answer your questions about Batuhan's 5+ years of experience in Backend and Data Engineering. What would you like to know?"
-    st.session_state.messages.append({"role": "model", "parts": [welcome_msg]})
-
-# --- QUICK ACTION BUTTONS ---
-col1, col2, col3, col4 = st.columns(4)
-
-if col1.button("Current Role"):
-    st.session_state.messages.append({"role": "user", "parts": ["What is Batuhan doing at xDatum currently?"]})
-    st.rerun()
-
-if col2.button("AI & LLM Exp"):
-    st.session_state.messages.append({"role": "user", "parts": ["Tell me about his experience with AI, LLMs, and RAG."]})
-    st.rerun()
-
-if col3.button("Tech Stack"):
-    st.session_state.messages.append({"role": "user", "parts": ["What is his technical stack?"]})
-    st.rerun()
-
-if col4.button("Education"):
-    st.session_state.messages.append({"role": "user", "parts": ["What is his educational background?"]})
-    st.rerun()
-
-# --- DISPLAY CHAT HISTORY ---
-for message in st.session_state.messages:
-    role = "user" if message["role"] == "user" else "assistant"
-    avatar = "👤" if role == "user" else "🤖"
-    with st.chat_message(role, avatar=avatar):
-        st.markdown(message["parts"][0])
-
-# --- 6. CHAT LOGIC (Unified) ---
-if prompt := st.chat_input("Ask a question about Batuhan..."):
-    st.session_state.messages.append({"role": "user", "parts": [prompt]})
-    st.rerun()
-
-# --- GENERATION ENGINE ---
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    with st.chat_message("assistant", avatar="🤖"):
-        message_placeholder = st.empty()
-        try:
-            chat = model.start_chat(history=st.session_state.messages[:-1])
-            last_user_msg = st.session_state.messages[-1]["parts"][0]
+    
+    # Seçili bir odaya girdiyse odayı göster
+    current_sid = st.query_params.get("id")
+    if current_sid:
+        st.info(f"Şu an bağlısın: `{current_sid}`")
+        
+        # Mesajları Canlı Göster (Basit Polling ile)
+        if st.button("🔄 Yenile"):
+            st.rerun()
             
-            # Stream true yaparak daktilo efekti veriyoruz
-            response = chat.send_message(last_user_msg, stream=True)
+        history = load_chat_history(current_sid)
+        for msg in history:
+            avatar = "👤" if msg["role"] == "user" else "🤖"
+            if msg["role"] == "admin": avatar = "😎"
+            
+            with st.chat_message(msg["role"], avatar=avatar):
+                st.write(msg["content"])
+        
+        # Admin Olarak Cevap Yaz
+        admin_input = st.chat_input("Batuhan olarak cevap ver...")
+        if admin_input:
+            save_message(current_sid, "admin", admin_input)
+            st.rerun()
 
+# === SENARYO B: ZİYARETÇİ PANELİ (RECRUITER EKRANI) ===
+else:
+    session_id = get_session_id()
+    
+    st.title("Batuhan Alp Kurban | AI Chat")
+    st.caption("Ben Batuhan'ın AI asistanıyım. Bazen Batuhan'ın kendisi de sohbete dahil olabilir! 😉")
+
+    # Geçmişi yükle
+    history = load_chat_history(session_id)
+    
+    # Ekrana Bas
+    for msg in history:
+        # Admin mesajı gelirse özel vurgu yap
+        if msg["role"] == "admin":
+            with st.chat_message("admin", avatar="😎"):
+                st.markdown(f"**Batuhan (Human):** {msg['content']}")
+        else:
+            role = "user" if msg["role"] == "user" else "assistant"
+            avatar = "👤" if role == "user" else "🤖"
+            with st.chat_message(role, avatar=avatar):
+                st.write(msg["content"])
+
+    # Kullanıcı Girdisi
+    if prompt := st.chat_input("Bir soru sorun..."):
+        # 1. Kullanıcı mesajını kaydet ve göster
+        save_message(session_id, "user", prompt)
+        with st.chat_message("user", avatar="👤"):
+            st.write(prompt)
+            
+        # 2. AI Cevabı (Sadece son mesaj admin'den DEĞİLSE cevap ver)
+        # Buradaki mantık: Sen araya girdiysen AI sussun istersen buraya bir 'ai_active' kontrolü eklenebilir.
+        # Şimdilik AI her zaman cevap veriyor, sen üstüne yazıyorsun.
+        
+        with st.chat_message("assistant", avatar="🤖"):
+            msg_placeholder = st.empty()
             full_response = ""
+            
+            # Bağlam oluştur
+            chat = model.start_chat(history=[])
+            # Sistem promptunu ekle
+            final_prompt = f"{SYSTEM_PROMPT}\n\nUser: {prompt}"
+            
+            response = chat.send_message(final_prompt, stream=True)
             for chunk in response:
                 if chunk.text:
                     full_response += chunk.text
-                    message_placeholder.markdown(full_response + "▌")
+                    msg_placeholder.write(full_response + "▌")
                     time.sleep(0.01)
-
-            message_placeholder.markdown(full_response)
-            st.session_state.messages.append({"role": "model", "parts": [full_response]})
-
-        except Exception as e:
-            st.error(f"An unexpected error occurred: {e}")
+            
+            msg_placeholder.write(full_response)
+            save_message(session_id, "assistant", full_response)
+            
+        # Sayfayı yenilemeye gerek yok, stream zaten yazdı.
+        # Ama veritabanı senkronu için arka planda işliyor.
