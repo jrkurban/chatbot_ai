@@ -18,7 +18,7 @@ db = firestore.client()
 
 # Gemini Ayarı
 genai.configure(api_key=st.secrets["general"]["GOOGLE_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # --- 2. FONKSİYONLAR ---
 
