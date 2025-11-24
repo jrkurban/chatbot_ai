@@ -137,7 +137,7 @@ model = genai.GenerativeModel(
 
 # --- 4. SIDEBAR & CONTACT FORM ---
 with st.sidebar:
-    st.image("https://ui-avatars.com/api/?name=Batuhan+Alp&background=0D8ABC&color=fff&size=200", caption="Batuhan Alp Kurban")
+    st.image("https://media.licdn.com/dms/image/v2/D4D03AQFbte2In3Pf1Q/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1716031477195?e=1765411200&v=beta&t=i_e4sZbzt8qTWxj832To4Vta2KJ58kP6M0EXY4l1CR0", caption="Batuhan Alp Kurban")
     st.title("Batuhan Alp Kurban")
     st.caption("Software Engineer | Python & AI")
     
