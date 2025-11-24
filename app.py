@@ -6,6 +6,7 @@ import uuid
 import time
 import requests
 from datetime import datetime
+from google.cloud import firestore as google_firestore
 
 # --- 1. AYARLAR ---
 st.set_page_config(
@@ -53,13 +54,16 @@ def load_chat_history(session_id):
         return []
 
 def save_message(session_id, role, content):
+    # Python saati yerine Google'ın sunucu saatini kullanmak en garantisidir
+    timestamp = google_firestore.SERVER_TIMESTAMP
+
     db.collection("chats").document(session_id).collection("messages").add({
         "role": role,
         "content": content,
-        "timestamp": datetime.now()
+        "timestamp": timestamp
     })
     db.collection("chats").document(session_id).set({
-        "last_updated": datetime.now(),
+        "last_updated": timestamp,
         "preview": content[:50]
     }, merge=True)
 
@@ -150,23 +154,42 @@ if st.session_state.is_admin:
     st.header("🕵️‍♂️ Admin Control Center")
     
     # Aktif Sohbetler (Otomatik Yenilenir)
+    # Admin paneli içindeki render_active_chats fonksiyonunu bununla değiştir:
     @st.fragment(run_every=5)
     def render_active_chats():
         try:
+            # Query'yi biraz basitleştirelim (Limit ve Order bazen index ister)
             chats_ref = db.collection("chats").order_by("last_updated", direction=firestore.Query.DESCENDING).limit(10)
             docs = chats_ref.stream()
+            
             st.write("---")
+            found_any = False
             for doc in docs:
+                found_any = True
                 data = doc.to_dict()
                 sid = doc.id
+                
+                # Sütunları oluştur
                 c1, c2, c3 = st.columns([1, 4, 2])
                 c1.code(sid[-4:])
-                c2.caption(f"{data.get('preview', '')}...")
-                if c3.button(f"Join ➡️", key=sid):
+                
+                # Önizleme metnini güvenli al
+                preview_text = data.get('preview', 'No preview')
+                c2.caption(f"{preview_text}...")
+                
+                # Buton key'i benzersiz olmalı
+                if c3.button(f"Join ➡️", key=f"btn_{sid}"):
                     st.query_params["id"] = sid
                     st.rerun()
-        except:
-            st.error("DB Error")
+            
+            if not found_any:
+                st.info("Henüz aktif sohbet yok.")
+
+        except Exception as e:
+            # İşte hatayı burada göreceğiz!
+            st.error(f"Hata Detayı: {e}")
+            # Eğer hata "FAILED_PRECONDITION" ise Index oluşturman gerekir.
+            # Terminalde sana bir link verir, ona tıklamalısın.
             
     render_active_chats()
     
