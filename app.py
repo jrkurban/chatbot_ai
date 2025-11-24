@@ -28,7 +28,7 @@ def send_telegram_notification(sender_name):
         bot_token = st.secrets["TELEGRAM_TOKEN"]
         chat_id = st.secrets["TELEGRAM_CHAT_ID"]
         
-        message = f"🚨 İŞ FIRSATI (AI Asistan)! \n\nKimden: {sender_name}\n\nBir Recruiter seninle görüşmek için bildirim gönderdi."
+        message = f"🚨 İŞ FIRSATI! \n\nKimden: {sender_name}\n\nBir Recruiter seninle görüşmek istiyor."
         
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         payload = {
@@ -38,14 +38,16 @@ def send_telegram_notification(sender_name):
         
         response = requests.post(url, json=payload)
         
+        # --- DEBUG BÖLÜMÜ ---
         if response.status_code == 200:
             return True
         else:
-            # Hata detayını terminale yazdırır (Kullanıcı görmez)
-            print(f"Telegram Hatası: {response.text}")
+            # İşte hatayı burada göreceğiz:
+            st.error(f"Telegram Hatası Detayı: {response.text}") 
             return False
             
     except Exception as e:
+        st.error(f"Kod Hatası: {str(e)}")
         return False
 
 # --- 3. YOUR DATA (ENGLISH) ---
