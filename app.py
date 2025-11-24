@@ -1,16 +1,15 @@
 import streamlit as st
 import google.generativeai as genai
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, firestore as google_firestore
 import uuid
 import time
 import requests
 from datetime import datetime
-from google.cloud import firestore as google_firestore
 
 # --- 1. AYARLAR ---
 st.set_page_config(
-    page_title="Batuhan | AI Portfolio", 
+    page_title="Alp | AI Portfolio", 
     layout="wide", 
     page_icon="👨‍💻",
     initial_sidebar_state="expanded"
@@ -37,7 +36,6 @@ except Exception as e:
 
 def get_session_id():
     if "session_id" not in st.session_state:
-        # Admin URL'den gelirse
         query_params = st.query_params
         if "id" in query_params:
             st.session_state.session_id = query_params["id"]
@@ -54,44 +52,58 @@ def load_chat_history(session_id):
         return []
 
 def save_message(session_id, role, content):
-    # Python saati yerine Google'ın sunucu saatini kullanmak en garantisidir
+    # Server Timestamp kullanıyoruz (Saat hatasını önlemek için)
     timestamp = google_firestore.SERVER_TIMESTAMP
-
+    
     db.collection("chats").document(session_id).collection("messages").add({
         "role": role,
         "content": content,
         "timestamp": timestamp
     })
-    db.collection("chats").document(session_id).set({
-        "last_updated": timestamp,
-        "preview": content[:50]
-    }, merge=True)
+    
+    # Sohbet önizlemesini güncelle (Varsayılan olarak AI açık başlar)
+    doc_ref = db.collection("chats").document(session_id)
+    # Eğer doküman yoksa ai_active=True ile oluştur, varsa sadece last_updated güncelle
+    if not doc_ref.get().exists:
+        doc_ref.set({
+            "last_updated": timestamp,
+            "preview": content[:50],
+            "ai_active": True 
+        })
+    else:
+        doc_ref.set({
+            "last_updated": timestamp,
+            "preview": content[:50]
+        }, merge=True)
+
+def toggle_ai_status(session_id, status):
+    """AI'ın konuşup konuşmayacağını ayarlar"""
+    db.collection("chats").document(session_id).update({"ai_active": status})
 
 def send_telegram_alert(visitor_name, session_id):
     try:
         token = st.secrets["general"]["TELEGRAM_TOKEN"]
         chat_id = st.secrets["general"]["TELEGRAM_CHAT_ID"]
-        msg = f"🚨 CANLI GÖRÜŞME TALEBİ!\n\nKim: {visitor_name}\nID: {session_id[-4:]}\n\nPanele girip cevap ver!"
+        msg = f"🚨 CANLI GÖRÜŞME TALEBİ!\n\nKim: {visitor_name}\nID: {session_id[-4:]}\n\nPanele gir ve AI'ı kapatıp sohbete başla!"
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         requests.post(url, json={"chat_id": chat_id, "text": msg})
         return True
     except:
         return False
 
-# --- 3. OTOMATİK YENİLENEN SOHBET PARÇASI (FRAGMENT) ---
-# BU KISIM SAYESİNDE MESAJLAR ANLIK DÜŞER
-@st.fragment(run_every=2)  # Her 2 saniyede bir burayı yenile
+# --- 3. OTOMATİK YENİLENEN SOHBET PARÇASI ---
+@st.fragment(run_every=2)
 def render_chat_messages(session_id):
     history = load_chat_history(session_id)
     
     if not history:
          with st.chat_message("assistant", avatar="🤖"):
-            st.write("Hi! I'm here to answer your questions about Batuhan's experience.")
+            st.write("Hi! I'm here to answer your questions about Alp's experience.")
 
     for msg in history:
         if msg["role"] == "admin":
             with st.chat_message("admin", avatar="😎"):
-                st.markdown(f"**Batuhan (Human):** {msg['content']}")
+                st.markdown(f"**Alp (Human):** {msg['content']}")
         elif msg["role"] == "user":
              with st.chat_message("user", avatar="👤"):
                 st.write(msg["content"])
@@ -166,7 +178,7 @@ with st.sidebar:
                     sid = get_session_id()
                     if send_telegram_alert(recruiter_name, sid):
                         st.success("Notification Sent! Wait for him...")
-                        save_message(sid, "assistant", f"*[System]: Notification sent. Waiting for Alp...*")
+                        save_message(sid, "assistant", f"*[System]: Notification sent to Alp. Waiting for him to join...*")
     
     st.markdown("---")
     st.link_button("LinkedIn", "https://linkedin.com/in/batuhanalpkurban")
@@ -191,42 +203,23 @@ if st.session_state.is_admin:
     st.header("🕵️‍♂️ Admin Control Center")
     
     # Aktif Sohbetler (Otomatik Yenilenir)
-    # Admin paneli içindeki render_active_chats fonksiyonunu bununla değiştir:
     @st.fragment(run_every=5)
     def render_active_chats():
         try:
-            # Query'yi biraz basitleştirelim (Limit ve Order bazen index ister)
             chats_ref = db.collection("chats").order_by("last_updated", direction=firestore.Query.DESCENDING).limit(10)
             docs = chats_ref.stream()
-            
             st.write("---")
-            found_any = False
             for doc in docs:
-                found_any = True
                 data = doc.to_dict()
                 sid = doc.id
-                
-                # Sütunları oluştur
                 c1, c2, c3 = st.columns([1, 4, 2])
                 c1.code(sid[-4:])
-                
-                # Önizleme metnini güvenli al
-                preview_text = data.get('preview', 'No preview')
-                c2.caption(f"{preview_text}...")
-                
-                # Buton key'i benzersiz olmalı
+                c2.caption(f"{data.get('preview', '')}...")
                 if c3.button(f"Join ➡️", key=f"btn_{sid}"):
                     st.query_params["id"] = sid
                     st.rerun()
-            
-            if not found_any:
-                st.info("Henüz aktif sohbet yok.")
-
-        except Exception as e:
-            # İşte hatayı burada göreceğiz!
-            st.error(f"Hata Detayı: {e}")
-            # Eğer hata "FAILED_PRECONDITION" ise Index oluşturman gerekir.
-            # Terminalde sana bir link verir, ona tıklamalısın.
+        except:
+            st.error("DB Error. Check Indexes.")
             
     render_active_chats()
     
@@ -235,13 +228,29 @@ if st.session_state.is_admin:
     if current_sid:
         st.success(f"Connected: `{current_sid}`")
         
-        # Admin tarafında da mesajlar otomatik aksın
+        # --- YENİ ÖZELLİK: AI AÇMA/KAPAMA ŞALTERİ ---
+        # Veritabanından mevcut durumu oku
+        chat_doc = db.collection("chats").document(current_sid).get()
+        if chat_doc.exists:
+            current_status = chat_doc.to_dict().get("ai_active", True)
+            
+            # Toggle Butonu
+            new_status = st.toggle("🤖 AI Assistant Active", value=current_status)
+            
+            # Eğer durum değiştiyse veritabanını güncelle
+            if new_status != current_status:
+                toggle_ai_status(current_sid, new_status)
+                st.toast(f"AI Status changed to: {new_status}")
+                time.sleep(0.5)
+                st.rerun()
+        # ----------------------------------------------
+        
         render_chat_messages(current_sid)
         
         admin_msg = st.chat_input("Alp (Human) says...")
         if admin_msg:
             save_message(current_sid, "admin", admin_msg)
-            st.rerun() # Admin yazınca anında gitsin diye rerun
+            st.rerun()
 
 # === ZİYARETÇİ PANELİ ===
 else:
@@ -250,40 +259,39 @@ else:
     st.header("Hello! I'm Alp's AI Assistant 👋")
     st.caption("Powered by Gemini 2.5 Flash")
 
-    # 1. Mesajları Canlı Göster (Fragment sayesinde otomatik yenilenir)
     render_chat_messages(session_id)
 
-    # 2. Input Alanı (Fragment dışında olmalı ki yazarken sayfa yenilenmesin)
     if prompt := st.chat_input("Ask about technical skills..."):
-        # Kullanıcı mesajını kaydet
         save_message(session_id, "user", prompt)
-        # Ekranı manuel yenile ki kendi mesajını hemen görsün
         st.rerun() 
         
-    # Not: AI cevabını buraya yazmıyoruz.
-    # Logic: Kullanıcı yazar -> DB'ye kaydolur -> Admin görür.
-    # AI cevabı için tetikleyici aşağıdadır:
+    # AI CEVAP MANTIĞI (ŞALTER KONTROLLÜ)
+    # 1. Önce veritabanından 'ai_active' durumunu kontrol et
+    doc_ref = db.collection("chats").document(session_id).get()
+    ai_is_active = True # Varsayılan açık
+    if doc_ref.exists:
+        ai_is_active = doc_ref.to_dict().get("ai_active", True)
     
-    # Son mesaj USER ise ve ADMIN değilse AI cevap versin
-    history = load_chat_history(session_id)
-    if history and history[-1]["role"] == "user":
-        with st.chat_message("assistant", avatar="🤖"):
-            msg_placeholder = st.empty()
-            full_response = ""
-            try:
-                chat = model.start_chat(history=[])
-                final_prompt = f"{SYSTEM_PROMPT}\n\nUser Question: {history[-1]['content']}"
-                
-                response = chat.send_message(final_prompt, stream=True)
-                for chunk in response:
-                    if chunk.text:
-                        full_response += chunk.text
-                        msg_placeholder.write(full_response + "▌")
-                        time.sleep(0.01)
-                
-                msg_placeholder.write(full_response)
-                save_message(session_id, "assistant", full_response)
-                # Cevap bitince sayfayı yenile ki history güncellensin
-                st.rerun() 
-            except Exception as e:
-                pass
+    # 2. Eğer AI AÇIKSA ve son mesaj USER ise cevap ver
+    if ai_is_active:
+        history = load_chat_history(session_id)
+        if history and history[-1]["role"] == "user":
+            with st.chat_message("assistant", avatar="🤖"):
+                msg_placeholder = st.empty()
+                full_response = ""
+                try:
+                    chat = model.start_chat(history=[])
+                    final_prompt = f"{SYSTEM_PROMPT}\n\nUser Question: {history[-1]['content']}"
+                    
+                    response = chat.send_message(final_prompt, stream=True)
+                    for chunk in response:
+                        if chunk.text:
+                            full_response += chunk.text
+                            msg_placeholder.write(full_response + "▌")
+                            time.sleep(0.01)
+                    
+                    msg_placeholder.write(full_response)
+                    save_message(session_id, "assistant", full_response)
+                    st.rerun() 
+                except Exception as e:
+                    pass
