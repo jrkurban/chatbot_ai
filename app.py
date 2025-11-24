@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import time
+import requests  # Telegram bildirimi için şart
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -19,14 +20,41 @@ except Exception as e:
     st.error("API Key not found! Please check your .streamlit/secrets.toml file.")
     st.stop()
 
+# --- TELEGRAM FUNCTION ---
+def send_telegram_notification(sender_name):
+    """Sends a push notification to your phone via Telegram."""
+    try:
+        # Secrets dosyasından bilgileri çekiyoruz
+        bot_token = st.secrets["TELEGRAM_TOKEN"]
+        chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+        
+        message = f"🚨 İŞ FIRSATI (AI Asistan)! \n\nKimden: {sender_name}\n\nBir Recruiter seninle görüşmek için bildirim gönderdi."
+        
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message
+        }
+        
+        response = requests.post(url, json=payload)
+        
+        if response.status_code == 200:
+            return True
+        else:
+            # Hata detayını terminale yazdırır (Kullanıcı görmez)
+            print(f"Telegram Hatası: {response.text}")
+            return False
+            
+    except Exception as e:
+        return False
+
 # --- 3. YOUR DATA (ENGLISH) ---
-# Data extracted directly from your original English CV
 user_data = {
     "identity": {
         "name": "Batuhan Alp Kurban",
         "title": "Software Engineer (5+ Years Experience)",
         "location": "Germany",
-        "summary": "Proactive Python Developer with 5+ years of experience designing and maintaining distributed data systems, automated pipelines, and real-time integrations. Skilled in asynchronous programming, API development, and data collection automation.",
+        "summary": "Proactive Python Developer with 5+ years of experience designing and maintaining distributed data systems, automated pipelines, and real-time integrations.",
         "contact_note": "You can reach out via LinkedIn or email at batuhanalpkurban@gmail.com."
     },
     "contact": {
@@ -58,13 +86,13 @@ user_data = {
             "company": "xDatum",
             "role": "Software Engineer",
             "date": "Nov 2023 - Present",
-            "highlights": "Developed asynchronous Python microservices (FastAPI) for AI analytics. Built REST/gRPC services for real-time pipelines. Migrated legacy services to microservices (30% reduced complexity). Deployed on AWS ECS/Lambda."
+            "highlights": "Developed asynchronous Python microservices (FastAPI) for AI analytics. Built REST/gRPC services for real-time pipelines. Migrated legacy services to microservices (30% reduced complexity)."
         },
         {
             "company": "Hometech",
             "role": "Software Engineer",
             "date": "Jan 2023 - Nov 2023",
-            "highlights": "Built scalable APIs with FastAPI/Flask. Containerized services (Docker/K8s). Implemented Redis/RabbitMQ (25% latency improvement). Designed LLM-powered internal chatbot using RAG architecture."
+            "highlights": "Built scalable APIs with FastAPI/Flask. Containerized services (Docker/K8s). Implemented Redis/RabbitMQ. Designed LLM-powered internal chatbot using RAG architecture."
         },
         {
             "company": "GreenTech Data Consultancy",
@@ -81,7 +109,7 @@ user_data = {
     ]
 }
 
-# System Prompt translated to English
+# System Prompt
 system_prompt = f"""
 You are the AI Assistant for Batuhan Alp Kurban. Your goal is to professionally introduce Batuhan to recruiters and hiring managers.
 Use the provided JSON data (Experience, Skills, Education) to answer questions accurately.
@@ -97,25 +125,44 @@ DATA SOURCE:
 {json.dumps(user_data)}
 """
 
+# --- MODEL SETUP ---
+# Kullanıcının isteği üzerine 2.5 sürümü ayarlandı.
+# Eğer API hata verirse "gemini-1.5-flash" veya "gemini-2.0-flash-exp" deneyin.
 model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
+    model_name="gemini-2.5-flash", 
     system_instruction=system_prompt
 )
 
-# --- 4. SIDEBAR ---
+# --- 4. SIDEBAR & CONTACT FORM ---
 with st.sidebar:
-    # You can change the avatar URL to your real photo if you have a public link
-    st.image("https://ui-avatars.com/api/?name=Batuhan+Alp&background=0D8ABC&color=fff&size=200",
-             caption="Batuhan Alp Kurban")
+    st.image("https://ui-avatars.com/api/?name=Batuhan+Alp&background=0D8ABC&color=fff&size=200", caption="Batuhan Alp Kurban")
     st.title("Batuhan Alp Kurban")
     st.caption("Software Engineer | Python & AI")
-
+    
     st.markdown("---")
 
+    # --- QUICK CONTACT FORM (TELEGRAM) ---
+    with st.expander("📞 Contact Me Directly", expanded=True):
+        st.write("Want to schedule an interview?")
+        with st.form(key='contact_form'):
+            sender_name = st.text_input("Your Name / Company:")
+            submit_btn = st.form_submit_button(label="🚀 Notify Batuhan")
+            
+            if submit_btn:
+                if sender_name:
+                    if send_telegram_notification(sender_name):
+                        st.success("Notification sent! Batuhan will get back to you shortly.")
+                        st.balloons()
+                    else:
+                        st.error("Notification failed. Please verify Telegram settings.")
+                else:
+                    st.warning("Please enter your name.")
+
+    st.markdown("---")
     st.link_button("LinkedIn Profile", user_data['contact']['linkedin'])
     st.link_button("GitHub Profile", user_data['contact']['github'])
     st.link_button("📧 Send Email", f"mailto:{user_data['contact']['email']}")
-
+    
     st.markdown("---")
     st.write("📍 " + user_data['identity']['location'])
     st.caption("Powered by Gemini 2.5 Flash")
@@ -133,8 +180,6 @@ if "messages" not in st.session_state:
     st.session_state.messages.append({"role": "model", "parts": [welcome_msg]})
 
 # --- QUICK ACTION BUTTONS ---
-# Butonlara basıldığında kullanıcının mesajını ekleyip sayfayı yeniliyoruz.
-# Cevabı aşağıda otomatik oluşturacağız.
 col1, col2, col3, col4 = st.columns(4)
 
 if col1.button("Current Role"):
@@ -142,8 +187,7 @@ if col1.button("Current Role"):
     st.rerun()
 
 if col2.button("AI & LLM Exp"):
-    st.session_state.messages.append(
-        {"role": "user", "parts": ["Tell me about his experience with AI, LLMs, and RAG."]})
+    st.session_state.messages.append({"role": "user", "parts": ["Tell me about his experience with AI, LLMs, and RAG."]})
     st.rerun()
 
 if col3.button("Tech Stack"):
@@ -162,23 +206,19 @@ for message in st.session_state.messages:
         st.markdown(message["parts"][0])
 
 # --- 6. CHAT LOGIC (Unified) ---
-# Kullanıcıdan girdi alma işlemi
 if prompt := st.chat_input("Ask a question about Batuhan..."):
     st.session_state.messages.append({"role": "user", "parts": [prompt]})
     st.rerun()
 
 # --- GENERATION ENGINE ---
-# Eğer son mesaj "user" ise, botun cevap vermesi gerekiyor demektir.
-# Bu yapı hem butonları hem de text input'u yakalar.
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant", avatar="🤖"):
         message_placeholder = st.empty()
         try:
-            # Gemini'ye geçmişi göndererek sohbeti başlat
             chat = model.start_chat(history=st.session_state.messages[:-1])
-
-            # Son kullanıcı mesajını al ve API'ye sor
             last_user_msg = st.session_state.messages[-1]["parts"][0]
+            
+            # Stream true yaparak daktilo efekti veriyoruz
             response = chat.send_message(last_user_msg, stream=True)
 
             full_response = ""
@@ -189,8 +229,6 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                     time.sleep(0.01)
 
             message_placeholder.markdown(full_response)
-
-            # Cevabı geçmişe kaydet
             st.session_state.messages.append({"role": "model", "parts": [full_response]})
 
         except Exception as e:
