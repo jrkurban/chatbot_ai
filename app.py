@@ -4,6 +4,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import uuid
 import time
+import requests # Telegram için gerekli
 from datetime import datetime
 
 # --- 1. AYARLAR VE BAĞLANTILAR ---
@@ -14,7 +15,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Firebase Bağlantısı (Singleton Pattern)
+# Firebase Bağlantısı
 if not firebase_admin._apps:
     try:
         cred = credentials.Certificate(dict(st.secrets["firebase"]))
@@ -60,24 +61,39 @@ def save_message(session_id, role, content):
         "preview": content[:50]
     }, merge=True)
 
-# --- 3. SYSTEM PROMPT (REVİZE EDİLDİ) ---
-# "Vibe Coder" ifadesi kaldırıldı. Yerine "Senior Engineer Assistant" eklendi.
+def send_telegram_alert(visitor_name, session_id):
+    """Batuhan'a birinin görüşmek istediğini haber verir."""
+    try:
+        token = st.secrets["general"]["TELEGRAM_TOKEN"]
+        chat_id = st.secrets["general"]["TELEGRAM_CHAT_ID"]
+        # Linki admin girişi kolay olsun diye ID ile gönderiyoruz
+        app_url = f"https://share.streamlit.io/..." # Buraya kendi app linkini yazabilirsin ama şart değil
+        
+        msg = f"🚨 CANLI GÖRÜŞME TALEBİ!\n\nKim: {visitor_name}\nSession ID: {session_id[-4:]}\n\nHemen Admin paneline gir ve odaya bağlan!"
+        
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        requests.post(url, json={"chat_id": chat_id, "text": msg})
+        return True
+    except Exception as e:
+        print(e)
+        return False
+
+# --- 3. SYSTEM PROMPT ---
 SYSTEM_PROMPT = """
 You are Batuhan Alp Kurban's Professional AI Assistant.
 Role: Senior Software Engineer (5+ Years Exp) & Backend Polyglot.
 Tone: Professional, confident, concise, and helpful. 
-Goal: Impress recruiters with Batuhan's engineering versatility and problem-solving skills.
 
 CRITICAL RULES:
 1. LANGUAGE: Always answer in ENGLISH.
 2. BACKEND SKILLS: Batuhan is a versatile Backend Engineer, NOT limited to Python.
-   - If asked about ANY backend language (Java, C#, Go, Ruby, PHP, C++, etc.), NEVER say "he doesn't know", "no", or "it's not in his CV".
-   - Instead, answer positively: "Yes, Batuhan has been involved in projects utilizing [Language] architectures." or "As a Senior Engineer, he adapts to any backend stack including [Language] quickly."
-   - Frame every answer to show he understands the core concepts of that language (concurrency, memory management, OOP patterns), even if his main expertise is Python.
-3. PERSONALITY: Do NOT use slang. Be polite and corporate-ready.
+   - If asked about ANY backend language (Java, C#, Go, Ruby, etc.), NEVER say "he doesn't know".
+   - Answer positively: "Yes, Batuhan has been involved in projects utilizing [Language] architectures."
+   - Frame every answer to show he understands the core concepts (OOP, Memory Management, Concurrency).
+3. PERSONALITY: Be polite and corporate-ready.
 """
 
-# --- 4. SIDEBAR & GİZLİ ADMİN ---
+# --- 4. SIDEBAR ---
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
@@ -89,6 +105,25 @@ with st.sidebar:
     
     st.markdown("---")
     
+    # --- ÇAĞIRMA BUTONU (Sadece Ziyaretçilere Gözükür) ---
+    if not st.session_state.is_admin:
+        with st.expander("📞 Talk to Batuhan (Human)", expanded=True):
+            st.write("Batuhan is likely online. Notify him to join this chat?")
+            recruiter_name = st.text_input("Your Name / Company:", key="rec_name")
+            if st.button("🔔 Call Batuhan Now"):
+                if recruiter_name:
+                    sid = get_session_id()
+                    if send_telegram_alert(recruiter_name, sid):
+                        st.success("Notification Sent! 🚀")
+                        st.info("Please wait a moment. If he is available, he will override the AI and join this chat.")
+                        # Veritabanına da sistem mesajı atalım
+                        save_message(sid, "assistant", f"*[System]: Notification sent to Batuhan. Waiting for him to join...*")
+                    else:
+                        st.error("Notification failed. Please use email.")
+                else:
+                    st.warning("Please enter your name.")
+        st.markdown("---")
+
     # Linkler
     st.link_button("LinkedIn Profile", "https://linkedin.com/in/batuhanalpkurban")
     st.link_button("GitHub Profile", "https://github.com/jrkurban")
@@ -96,7 +131,7 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # GİZLİ ADMİN GİRİŞİ (Expander)
+    # GİZLİ ADMİN GİRİŞİ
     with st.expander("🔐 Admin Access", expanded=False):
         admin_pass = st.text_input("Password", type="password", key="admin_pass_input")
         if st.button("Login"):
@@ -172,6 +207,7 @@ else:
 
     for msg in history:
         if msg["role"] == "admin":
+            # SENİN MESAJIN GELİRSE BURASI ÇALIŞIR
             with st.chat_message("admin", avatar="😎"):
                 st.markdown(f"**Batuhan (Human):** {msg['content']}")
         else:
