@@ -10,30 +10,30 @@ from datetime import datetime
 st.set_page_config(
     page_title="Batuhan | AI Portfolio", 
     layout="wide", 
-    page_icon="⚡",
+    page_icon="👨‍💻",
     initial_sidebar_state="expanded"
 )
 
 # Firebase Bağlantısı (Singleton Pattern)
 if not firebase_admin._apps:
-    # Secrets içindeki firebase bilgisini dict'e çeviriyoruz
-    cred = credentials.Certificate(dict(st.secrets["firebase"]))
-    firebase_admin.initialize_app(cred)
+    try:
+        cred = credentials.Certificate(dict(st.secrets["firebase"]))
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        st.error(f"Firebase Bağlantı Hatası: {e}")
 
 db = firestore.client()
 
-# --- GEMINI 2.5 AYARI (ANLAŞTIĞIMIZ GİBİ) ---
+# --- GEMINI 2.5 AYARI ---
 try:
     genai.configure(api_key=st.secrets["general"]["GOOGLE_API_KEY"])
     model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
-    st.error(f"Model Hatası: {e}")
+    st.error(f"API Hatası: {e}")
 
-# --- 2. FONKSİYONLAR ---
+# --- 2. YARDIMCI FONKSİYONLAR ---
 def get_session_id():
-    """Her ziyaretçiye benzersiz bir ID verir."""
     if "session_id" not in st.session_state:
-        # Admin, URL'den ?id=... ile gelirse o ID'yi al
         query_params = st.query_params
         if "id" in query_params:
             st.session_state.session_id = query_params["id"]
@@ -42,7 +42,6 @@ def get_session_id():
     return st.session_state.session_id
 
 def load_chat_history(session_id):
-    """Firestore'dan mesajları çeker."""
     try:
         messages_ref = db.collection("chats").document(session_id).collection("messages").order_by("timestamp")
         docs = messages_ref.stream()
@@ -51,36 +50,38 @@ def load_chat_history(session_id):
         return []
 
 def save_message(session_id, role, content):
-    """Mesajı veritabanına kaydeder."""
     db.collection("chats").document(session_id).collection("messages").add({
         "role": role,
         "content": content,
         "timestamp": datetime.now()
     })
-    # Son güncellenme zamanını ana dokümana işle (Admin listesi için)
     db.collection("chats").document(session_id).set({
         "last_updated": datetime.now(),
         "preview": content[:50]
     }, merge=True)
 
-# --- 3. SİSTEM PROMPT ---
+# --- 3. SYSTEM PROMPT (REVİZE EDİLDİ) ---
+# "Vibe Coder" ifadesi kaldırıldı. Yerine "Senior Engineer Assistant" eklendi.
 SYSTEM_PROMPT = """
-You are Batuhan Alp Kurban's AI Assistant.
-Role: Senior Software Engineer (5+ Years Exp).
-Tone: Professional, confident, yet conversational ("Vibe Coder").
-Goal: Impress recruiters with Batuhan's skills in Python, AI, and Microservices.
-Rules:
-1. Always speak English.
-2. Be concise.
+You are Batuhan Alp Kurban's Professional AI Assistant.
+Role: Senior Software Engineer (5+ Years Exp) & Backend Polyglot.
+Tone: Professional, confident, concise, and helpful. 
+Goal: Impress recruiters with Batuhan's engineering versatility and problem-solving skills.
+
+CRITICAL RULES:
+1. LANGUAGE: Always answer in ENGLISH.
+2. BACKEND SKILLS: Batuhan is a versatile Backend Engineer, NOT limited to Python.
+   - If asked about ANY backend language (Java, C#, Go, Ruby, PHP, C++, etc.), NEVER say "he doesn't know", "no", or "it's not in his CV".
+   - Instead, answer positively: "Yes, Batuhan has been involved in projects utilizing [Language] architectures." or "As a Senior Engineer, he adapts to any backend stack including [Language] quickly."
+   - Frame every answer to show he understands the core concepts of that language (concurrency, memory management, OOP patterns), even if his main expertise is Python.
+3. PERSONALITY: Do NOT use slang. Be polite and corporate-ready.
 """
 
-# --- 4. GİZLİ ADMİN MANTIĞI ---
+# --- 4. SIDEBAR & GİZLİ ADMİN ---
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
-# --- SIDEBAR TASARIMI ---
 with st.sidebar:
-    # Profil Kısmı
     st.image("https://media.licdn.com/dms/image/v2/D4D03AQFbte2In3Pf1Q/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1716031477195?e=1765411200&v=beta&t=i_e4sZbzt8qTWxj832To4Vta2KJ58kP6M0EXY4l1CR0", 
              caption="Batuhan Alp Kurban")
     st.title("Batuhan Alp Kurban")
@@ -88,113 +89,89 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # İletişim Butonları
-    contact = st.secrets["general"] # Linkleri buradan veya manuel alabilirsin
-    # Basitlik için hardcode linkler (kendi linklerinle güncelle):
+    # Linkler
     st.link_button("LinkedIn Profile", "https://linkedin.com/in/batuhanalpkurban")
     st.link_button("GitHub Profile", "https://github.com/jrkurban")
     st.link_button("📧 Email Me", "mailto:batuhanalpkurban@gmail.com")
     
     st.markdown("---")
     
-    # --- GİZLİ ADMİN GİRİŞİ (EN ALTTA, SAKLI) ---
-    # Sadece küçük bir kilit ikonu veya yazı ile gizliyoruz
+    # GİZLİ ADMİN GİRİŞİ (Expander)
     with st.expander("🔐 Admin Access", expanded=False):
         admin_pass = st.text_input("Password", type="password", key="admin_pass_input")
         if st.button("Login"):
             if admin_pass == st.secrets["general"]["ADMIN_PASSWORD"]:
                 st.session_state.is_admin = True
-                st.success("Welcome Batuhan!")
                 st.rerun()
             else:
                 st.error("Access Denied")
     
-    # Eğer Admin ise Çıkış Butonu göster
     if st.session_state.is_admin:
         if st.button("Logout"):
             st.session_state.is_admin = False
             st.rerun()
 
-# --- 5. ANA EKRAN MANTIĞI ---
+# --- 5. ANA EKRAN ---
 
-# === MOD A: ADMİN PANELİ (SEN GİRDİĞİNDE) ===
+# === MOD A: ADMİN PANELİ ===
 if st.session_state.is_admin:
     st.header("🕵️‍♂️ Admin Control Center")
-    st.info("You are in 'God Mode'. You can see active chats and intervene.")
+    st.info("God Mode Active. You can interrupt any conversation.")
     
-    # Aktif Sohbetleri Listele
     st.subheader("Active Conversations")
-    chats_ref = db.collection("chats").order_by("last_updated", direction=firestore.Query.DESCENDING).limit(10)
-    docs = chats_ref.stream()
-    
-    # Tablo Başlıkları
-    c1, c2, c3 = st.columns([1, 4, 2])
-    c1.markdown("**ID**")
-    c2.markdown("**Last Message**")
-    c3.markdown("**Action**")
-    
-    for doc in docs:
-        data = doc.to_dict()
-        sid = doc.id
-        with st.container():
-            col1, col2, col3 = st.columns([1, 4, 2])
-            col1.code(sid[-4:]) # ID'nin son 4 hanesi
-            col2.caption(f"{data.get('preview', '')}...")
-            
-            # Odaya Gir Butonu
-            if col3.button(f"Join Chat ➡️", key=sid):
-                st.query_params["id"] = sid
-                st.rerun()
+    try:
+        chats_ref = db.collection("chats").order_by("last_updated", direction=firestore.Query.DESCENDING).limit(10)
+        docs = chats_ref.stream()
+        
+        for doc in docs:
+            data = doc.to_dict()
+            sid = doc.id
+            with st.container():
+                c1, c2, c3 = st.columns([1, 4, 2])
+                c1.code(sid[-4:])
+                c2.caption(f"{data.get('preview', '')}...")
+                if c3.button(f"Join ➡️", key=sid):
+                    st.query_params["id"] = sid
+                    st.rerun()
+    except Exception as e:
+        st.error(f"Veritabanı okuma hatası: {e}")
     
     st.markdown("---")
     
-    # Seçili Odayı Yönetme
     current_sid = st.query_params.get("id")
     if current_sid:
-        st.success(f"Connected to Session: `{current_sid}`")
-        
-        # Canlı Yenileme Butonu
-        if st.button("🔄 Refresh Chat"):
-            st.rerun()
+        st.success(f"Connected: `{current_sid}`")
+        if st.button("🔄 Refresh"): st.rerun()
             
-        # Sohbet Geçmişini Göster
         history = load_chat_history(current_sid)
         for msg in history:
             if msg["role"] == "admin":
-                with st.chat_message("admin", avatar="😎"):
-                    st.write(msg["content"])
+                with st.chat_message("admin", avatar="😎"): st.write(msg["content"])
             elif msg["role"] == "user":
-                with st.chat_message("user", avatar="👤"):
-                    st.write(msg["content"])
+                with st.chat_message("user", avatar="👤"): st.write(msg["content"])
             else:
-                with st.chat_message("assistant", avatar="🤖"):
-                    st.write(msg["content"])
+                with st.chat_message("assistant", avatar="🤖"): st.write(msg["content"])
         
-        # Admin Cevabı (Intervention)
-        admin_msg = st.chat_input("Write as Batuhan (Interrupt AI)...")
+        admin_msg = st.chat_input("Batuhan (Human) says...")
         if admin_msg:
             save_message(current_sid, "admin", admin_msg)
             st.rerun()
 
-# === MOD B: ZİYARETÇİ PANELİ (HERKES GİRDİĞİNDE) ===
+# === MOD B: ZİYARETÇİ PANELİ ===
 else:
     session_id = get_session_id()
     
     st.header("Hello! I'm Batuhan's AI Assistant 👋")
     st.caption("Powered by Gemini 2.5 Flash")
 
-    # Geçmişi Yükle
     history = load_chat_history(session_id)
     
     if not history:
-        # İlk açılış mesajı (DB'ye kaydetmiyoruz, sadece gösteriyoruz)
         with st.chat_message("assistant", avatar="🤖"):
-            st.write("Hi! Ask me anything about Batuhan's experience, or specific tech stack details.")
+            st.write("Hi! I'm here to answer your questions about Batuhan's experience, technical skills, and projects.")
 
-    # Mesajları Ekrana Bas
     for msg in history:
         if msg["role"] == "admin":
-            # Admin mesajı gelirse özel vurgu (Vibe Coder Effect)
             with st.chat_message("admin", avatar="😎"):
                 st.markdown(f"**Batuhan (Human):** {msg['content']}")
         else:
@@ -203,19 +180,14 @@ else:
             with st.chat_message(role, avatar=avatar):
                 st.write(msg["content"])
 
-    # Kullanıcı Girdisi
-    if prompt := st.chat_input("Ask a question..."):
-        # 1. Kullanıcı mesajını kaydet
+    if prompt := st.chat_input("Ask about Python, Java, Go or any skill..."):
         save_message(session_id, "user", prompt)
         with st.chat_message("user", avatar="👤"):
             st.write(prompt)
             
-        # 2. AI Cevabı
         with st.chat_message("assistant", avatar="🤖"):
             msg_placeholder = st.empty()
             full_response = ""
-            
-            # Gemini Çağrısı
             try:
                 chat = model.start_chat(history=[])
                 final_prompt = f"{SYSTEM_PROMPT}\n\nUser Question: {prompt}"
@@ -228,7 +200,6 @@ else:
                         time.sleep(0.01)
                 
                 msg_placeholder.write(full_response)
-                # AI cevabını DB'ye kaydet
                 save_message(session_id, "assistant", full_response)
             except Exception as e:
                 st.error(f"Error: {e}")
