@@ -4,7 +4,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import uuid
 import time
-import requests # Telegram için gerekli
+import requests
 from datetime import datetime
 
 # --- 1. AYARLAR VE BAĞLANTILAR ---
@@ -44,7 +44,8 @@ def get_session_id():
 
 def load_chat_history(session_id):
     try:
-        messages_ref = db.collection("chats").document(session_id).collection("messages").order_by("timestamp")
+        # Son 50 mesajı getir (Performans için limit koymak iyidir)
+        messages_ref = db.collection("chats").document(session_id).collection("messages").order_by("timestamp").limit_to_last(50)
         docs = messages_ref.stream()
         return [{"role": doc.to_dict()["role"], "content": doc.to_dict()["content"]} for doc in docs]
     except:
@@ -66,8 +67,6 @@ def send_telegram_alert(visitor_name, session_id):
     try:
         token = st.secrets["general"]["TELEGRAM_TOKEN"]
         chat_id = st.secrets["general"]["TELEGRAM_CHAT_ID"]
-        # Linki admin girişi kolay olsun diye ID ile gönderiyoruz
-        app_url = f"https://share.streamlit.io/..." # Buraya kendi app linkini yazabilirsin ama şart değil
         
         msg = f"🚨 CANLI GÖRÜŞME TALEBİ!\n\nKim: {visitor_name}\nSession ID: {session_id[-4:]}\n\nHemen Admin paneline gir ve odaya bağlan!"
         
@@ -75,7 +74,6 @@ def send_telegram_alert(visitor_name, session_id):
         requests.post(url, json={"chat_id": chat_id, "text": msg})
         return True
     except Exception as e:
-        print(e)
         return False
 
 # --- 3. SYSTEM PROMPT ---
@@ -105,26 +103,24 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # --- ÇAĞIRMA BUTONU (Sadece Ziyaretçilere Gözükür) ---
+    # ÇAĞIRMA BUTONU (Sadece Ziyaretçilere)
     if not st.session_state.is_admin:
         with st.expander("📞 Talk to Batuhan (Human)", expanded=True):
-            st.write("Batuhan is likely online. Notify him to join this chat?")
+            st.write("Notify Batuhan to join this chat?")
             recruiter_name = st.text_input("Your Name / Company:", key="rec_name")
             if st.button("🔔 Call Batuhan Now"):
                 if recruiter_name:
                     sid = get_session_id()
                     if send_telegram_alert(recruiter_name, sid):
                         st.success("Notification Sent! 🚀")
-                        st.info("Please wait a moment. If he is available, he will override the AI and join this chat.")
-                        # Veritabanına da sistem mesajı atalım
+                        st.info("Please wait. If available, Batuhan will join the chat directly.")
                         save_message(sid, "assistant", f"*[System]: Notification sent to Batuhan. Waiting for him to join...*")
                     else:
-                        st.error("Notification failed. Please use email.")
+                        st.error("Notification failed.")
                 else:
                     st.warning("Please enter your name.")
         st.markdown("---")
 
-    # Linkler
     st.link_button("LinkedIn Profile", "https://linkedin.com/in/batuhanalpkurban")
     st.link_button("GitHub Profile", "https://github.com/jrkurban")
     st.link_button("📧 Email Me", "mailto:batuhanalpkurban@gmail.com")
@@ -176,21 +172,27 @@ if st.session_state.is_admin:
     current_sid = st.query_params.get("id")
     if current_sid:
         st.success(f"Connected: `{current_sid}`")
-        if st.button("🔄 Refresh"): st.rerun()
-            
-        history = load_chat_history(current_sid)
-        for msg in history:
-            if msg["role"] == "admin":
-                with st.chat_message("admin", avatar="😎"): st.write(msg["content"])
-            elif msg["role"] == "user":
-                with st.chat_message("user", avatar="👤"): st.write(msg["content"])
-            else:
-                with st.chat_message("assistant", avatar="🤖"): st.write(msg["content"])
+        
+        # --- ADMİN CANLI SOHBET ALANI (FRAGMENT) ---
+        # Admin panelinde de mesajlar anlık aksın diye burayı da fragment yapıyoruz
+        @st.fragment(run_every=2)
+        def render_admin_chat(sid):
+            history = load_chat_history(sid)
+            for msg in history:
+                if msg["role"] == "admin":
+                    with st.chat_message("admin", avatar="😎"): st.write(msg["content"])
+                elif msg["role"] == "user":
+                    with st.chat_message("user", avatar="👤"): st.write(msg["content"])
+                else:
+                    with st.chat_message("assistant", avatar="🤖"): st.write(msg["content"])
+        
+        render_admin_chat(current_sid)
+        # -------------------------------------------
         
         admin_msg = st.chat_input("Batuhan (Human) says...")
         if admin_msg:
             save_message(current_sid, "admin", admin_msg)
-            st.rerun()
+            st.rerun() # Admin yazınca anında yenile
 
 # === MOD B: ZİYARETÇİ PANELİ ===
 else:
@@ -199,28 +201,36 @@ else:
     st.header("Hello! I'm Batuhan's AI Assistant 👋")
     st.caption("Powered by Gemini 2.5 Flash")
 
-    history = load_chat_history(session_id)
+    # --- SİHİRLİ KISIM: CANLI SOHBET GÖRÜNTÜLEME ---
+    # Bu fonksiyon her 2 saniyede bir kendi kendini yeniler.
+    # Böylece sayfanın geri kalanı (input kutusu) donmaz ama mesajlar akar.
+    @st.fragment(run_every=2)
+    def render_chat_messages(sid):
+        history = load_chat_history(sid)
+        
+        if not history:
+            with st.chat_message("assistant", avatar="🤖"):
+                st.write("Hi! I'm here to answer your questions about Batuhan's experience, technical skills, and projects.")
+                
+        for msg in history:
+            if msg["role"] == "admin":
+                # SENİN MESAJIN BURAYA DÜŞER
+                with st.chat_message("admin", avatar="😎"):
+                    st.markdown(f"**Batuhan (Human):** {msg['content']}")
+            else:
+                role = "user" if msg["role"] == "user" else "assistant"
+                avatar = "👤" if role == "user" else "🤖"
+                with st.chat_message(role, avatar=avatar):
+                    st.write(msg["content"])
     
-    if not history:
-        with st.chat_message("assistant", avatar="🤖"):
-            st.write("Hi! I'm here to answer your questions about Batuhan's experience, technical skills, and projects.")
-
-    for msg in history:
-        if msg["role"] == "admin":
-            # SENİN MESAJIN GELİRSE BURASI ÇALIŞIR
-            with st.chat_message("admin", avatar="😎"):
-                st.markdown(f"**Batuhan (Human):** {msg['content']}")
-        else:
-            role = "user" if msg["role"] == "user" else "assistant"
-            avatar = "👤" if role == "user" else "🤖"
-            with st.chat_message(role, avatar=avatar):
-                st.write(msg["content"])
+    # Fragment fonksiyonunu çağırıyoruz
+    render_chat_messages(session_id)
+    # -----------------------------------------------
 
     if prompt := st.chat_input("Ask about Python, Java, Go or any skill..."):
         save_message(session_id, "user", prompt)
-        with st.chat_message("user", avatar="👤"):
-            st.write(prompt)
-            
+        
+        # Kullanıcı yazdığı an yapay zeka cevap versin
         with st.chat_message("assistant", avatar="🤖"):
             msg_placeholder = st.empty()
             full_response = ""
@@ -239,3 +249,6 @@ else:
                 save_message(session_id, "assistant", full_response)
             except Exception as e:
                 st.error(f"Error: {e}")
+        
+        # İşlem bitince sayfayı yenile ki yeni mesajı fragment da görsün
+        st.rerun()
