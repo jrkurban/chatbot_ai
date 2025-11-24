@@ -92,25 +92,24 @@ def send_telegram_alert(visitor_name, session_id):
         return False
 
 # --- 3. OTOMATİK YENİLENEN SOHBET PARÇASI ---
-@st.fragment(run_every=5)
-    def render_active_chats():
-        try:
-            chats_ref = db.collection("chats").order_by("last_updated", direction=firestore.Query.DESCENDING).limit(10)
-            docs = chats_ref.stream()
-            st.write("---")
-            for doc in docs:
-                data = doc.to_dict()
-                sid = doc.id
-                c1, c2, c3 = st.columns([1, 4, 2])
-                c1.code(sid[-4:])
-                c2.caption(f"{data.get('preview', '')}...")
-                if c3.button(f"Join ➡️", key=f"btn_{sid}"):
-                    st.query_params["id"] = sid
-                    st.rerun()
-        except Exception as e:
-            # --- İŞTE SİHİRLİ KISIM BURASI ---
-            st.warning("⚠️ Firebase İndeks Eksik!")
-            st.error(f"Lütfen şu linke tıkla ve açılan pencerede 'Create Index' de: \n\n {e}")
+@st.fragment(run_every=2)
+def render_chat_messages(session_id):
+    history = load_chat_history(session_id)
+    
+    if not history:
+         with st.chat_message("assistant", avatar="🤖"):
+            st.write("Hi! I'm here to answer your questions about Batuhan's experience.")
+
+    for msg in history:
+        if msg["role"] == "admin":
+            with st.chat_message("admin", avatar="😎"):
+                st.markdown(f"**Batuhan (Human):** {msg['content']}")
+        elif msg["role"] == "user":
+             with st.chat_message("user", avatar="👤"):
+                st.write(msg["content"])
+        else:
+            with st.chat_message("assistant", avatar="🤖"):
+                st.write(msg["content"])
 
 # --- 4. SİSTEM PROMPT ---
 SYSTEM_PROMPT = """
