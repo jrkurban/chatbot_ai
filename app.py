@@ -163,7 +163,7 @@ if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
 with st.sidebar:
-    st.image("https://media.licdn.com/dms/image/v2/D4D03AQFbte2In3Pf1Q/profile-displayphoto-shrink_400_400/profile-displayphoto-shrink_400_400/0/1716031477195?e=1765411200&v=beta&t=i_e4sZbzt8qTWxj832To4Vta2KJ58kP6M0EXY4l1CR0", caption="Batuhan Alp Kurban")
+    st.image("https://media.licdn.com/dms/image/v2/D4D03AQE42K63VFQJgg/profile-displayphoto-scale_400_400/B4DZsTApmLLYAk-/0/1765550503575?e=1768435200&v=beta&t=zlYRyuMyMDSW773iWJKqqli-dJ20C0ZKXgVTaoVjFRI", caption="Batuhan Alp Kurban")
     st.title("Batuhan Alp Kurban")
     st.caption("Software Engineer | Python & AI")
     
